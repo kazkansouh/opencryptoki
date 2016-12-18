@@ -2927,7 +2927,7 @@ CK_RV token_specific_ec_generate_keypair(TEMPLATE *publ_tmpl,
   CK_ATTRIBUTE       * attr     = NULL;
   CK_BBOOL             flag;
   CK_RV                rc = CKR_OK;
-  const CK_BYTE*          ecParams = NULL;
+  CK_BYTE*             ecParams = NULL;
   CK_ULONG             ecParams_len = 0;
   EC_KEY *eckey = NULL;
 
@@ -2936,14 +2936,16 @@ CK_RV token_specific_ec_generate_keypair(TEMPLATE *publ_tmpl,
     TRACE_ERROR("%s\n", ock_err(ERR_TEMPLATE_INCOMPLETE));
     return CKR_TEMPLATE_INCOMPLETE;  // should never happen
   }
-  ecParams = (const CK_BYTE_PTR)(attr->pValue);
+  ecParams = (CK_BYTE_PTR)(attr->pValue);
   ecParams_len = attr->ulValueLen;
 
   EC_GROUP* group = NULL;
   switch (ecParams[0]) {
   case 0x06: // Named Curve
     {
-      ASN1_OBJECT *o = d2i_ASN1_OBJECT(NULL, &ecParams, ecParams_len);
+      ASN1_OBJECT *o = d2i_ASN1_OBJECT(NULL, (const CK_BYTE**)&ecParams, ecParams_len);
+      ecParams = (CK_BYTE_PTR)(attr->pValue);
+
       if (o) {
 	group = EC_GROUP_new_by_curve_name(OBJ_obj2nid(o));
 	EC_GROUP_set_asn1_flag(group, OPENSSL_EC_NAMED_CURVE);
@@ -2952,7 +2954,8 @@ CK_RV token_specific_ec_generate_keypair(TEMPLATE *publ_tmpl,
     }
     break;
   case 0x30: // EC Parameters
-    group = d2i_ECPKParameters(NULL, &ecParams, ecParams_len);
+    group = d2i_ECPKParameters(NULL, (const CK_BYTE**)&ecParams, ecParams_len);
+    ecParams = (CK_BYTE_PTR)(attr->pValue);
     break;
   }
 
@@ -2979,20 +2982,48 @@ CK_RV token_specific_ec_generate_keypair(TEMPLATE *publ_tmpl,
     goto end;
   }
 
-  CK_BYTE buffer[1024];
-  CK_BYTE_PTR bufferindex = buffer;
-  CK_ULONG written = i2d_ECPrivateKey(eckey, &bufferindex);
 
-  rc = build_attribute( CKA_VALUE, buffer, written, &attr );
+  const BIGNUM *bn_privkey = EC_KEY_get0_private_key(eckey);
+  if (bn_privkey == NULL) {
+    printf("failed to get private key\n");
+    return 1;
+  }
+
+  unsigned char *pch_privkey =
+    (unsigned char*)malloc(BN_num_bytes(bn_privkey));
+  int bignum_len = BN_bn2bin(bn_privkey, pch_privkey);
+
+  rc = build_attribute( CKA_VALUE, pch_privkey, bignum_len, &attr );
+  if (rc != CKR_OK){
+    TRACE_DEVEL("build_attribute failed\n");
+    goto end;
+  }
+  template_update_attribute( priv_tmpl, attr );
+  free(pch_privkey);
+  pch_privkey = NULL;
+
+  rc = build_attribute( CKA_EC_PARAMS, ecParams, ecParams_len, &attr );
   if (rc != CKR_OK){
     TRACE_DEVEL("build_attribute failed\n");
     goto end;
   }
   template_update_attribute( priv_tmpl, attr );
 
-  bufferindex = buffer;
-  written = i2d_EC_PUBKEY(eckey, &bufferindex);
-  rc = build_attribute( CKA_VALUE, buffer, written, &attr );
+  CK_BBOOL tru = 1;
+  rc = build_attribute( CKA_LOCAL, &tru, sizeof(tru), &attr );
+  if (rc != CKR_OK){
+    TRACE_DEVEL("build_attribute failed\n");
+    goto end;
+  }
+  template_update_attribute( priv_tmpl, attr );
+  template_update_attribute( publ_tmpl, attr );
+
+
+  CK_BYTE buffer[1024];
+  CK_BYTE_PTR bufferindex = buffer;
+  CK_ULONG written = i2o_ECPublicKey(eckey, &bufferindex);
+
+  rc = build_attribute( CKA_EC_POINT, buffer, written, &attr );
   if (rc != CKR_OK){
     TRACE_DEVEL("build_attribute failed\n");
     goto end;
