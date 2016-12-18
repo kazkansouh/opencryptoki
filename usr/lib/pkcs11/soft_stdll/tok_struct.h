@@ -375,7 +375,7 @@ token_spec_t token_specific = {
 	// Elliptic Curve
 	NULL,			// ec_sign
 	NULL,			// ec_verify
-	NULL,			// ec_generate_keypair
+	&token_specific_ec_generate_keypair,
 /* Begin code contributed by Corrent corp. */
 	// DH
 	&token_specific_dh_pkcs_derive,
@@ -400,8 +400,8 @@ token_spec_t token_specific = {
 	&token_specific_aes_ecb,
 	&token_specific_aes_cbc,
 	NULL,			// aes_ctr
-	NULL,			// aes_gcm_init
-	NULL,			// aes_gcm
+	&token_specific_aes_gcm_init,			// aes_gcm_init
+	&token_specific_aes_gcm,			// aes_gcm
 	NULL,			// aes_gcm_update
 	NULL,			// aes_gcm_final
 	NULL,			// aes_ofb

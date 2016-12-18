@@ -325,6 +325,9 @@
 #include <openssl/dh.h>
 #include <openssl/aes.h>
 #include <openssl/evp.h>
+#include <openssl/ec.h>
+#include <openssl/rand.h>
+#include <openssl/x509.h>
 
 typedef unsigned int uint32_t;
 
@@ -2161,6 +2164,11 @@ MECH_LIST_ELEMENT mech_list[] = {
 	{CKM_AES_ECB, {16, 32, CKF_ENCRYPT|CKF_DECRYPT|CKF_WRAP|CKF_UNWRAP}},
 	{CKM_AES_CBC, {16, 32, CKF_ENCRYPT|CKF_DECRYPT|CKF_WRAP|CKF_UNWRAP}},
 	{CKM_AES_CBC_PAD, {16, 32, CKF_ENCRYPT|CKF_DECRYPT|CKF_WRAP|CKF_UNWRAP}},
+	{CKM_AES_GCM, {16, 32, CKF_ENCRYPT|CKF_DECRYPT|CKF_WRAP|CKF_UNWRAP}},
+#endif
+#if !(NOEC)
+	{CKM_EC_KEY_PAIR_GEN, {160, 521, CKF_GENERATE_KEY_PAIR|
+                               CKF_EC_F_P|CKF_EC_NAMEDCURVE|CKF_EC_UNCOMPRESS}},
 #endif
         {CKM_GENERIC_SECRET_KEY_GEN, {80, 2048, CKF_GENERATE}}
 };
@@ -2732,4 +2740,273 @@ CK_RV token_specific_generic_secret_key_gen(TEMPLATE *tmpl)
 		TRACE_DEVEL("template_update_attribute(CKA_VALUE) failed.\n");
 
         return rc;
+}
+
+typedef struct SOFT_GCM_CONTEXT {
+  EVP_CIPHER_CTX *ctx;
+  //  int len;
+  int tag_len;
+} *SOFT_GCM_CONTEXT_PTR;
+
+CK_RV token_specific_aes_gcm_init(SESSION           *sess,
+				  ENCR_DECR_CONTEXT *ctx,
+				  CK_MECHANISM      *mech,
+				  CK_OBJECT_HANDLE  hkey,
+				  CK_BYTE           encrypt) {
+	int rc;
+	EVP_CIPHER_CTX *ecctx = NULL;
+	OBJECT *key = NULL;
+
+	rc = object_mgr_find_in_map1(hkey, &key);
+	if (rc != CKR_OK) {
+		TRACE_ERROR("Failed to find specified object.\n");
+		return rc;
+	}
+
+	ecctx = EVP_CIPHER_CTX_new();
+	if (ecctx == NULL) {
+		TRACE_ERROR("%s\n", ock_err(ERR_HOST_MEMORY));
+		return CKR_HOST_MEMORY;
+	}
+
+	CK_ATTRIBUTE *attr_key = NULL;
+	CK_ATTRIBUTE *attr_key_len = NULL;
+	
+	// get the key value
+	if (template_attribute_find(key->template, CKA_VALUE, &attr_key) == FALSE) {
+		TRACE_ERROR("Could not find CKA_VALUE for the key\n");
+		return CKR_FUNCTION_FAILED;
+	}
+
+	// get the key value len
+	if (template_attribute_find(key->template, CKA_VALUE_LEN, &attr_key_len) == FALSE) {
+		TRACE_ERROR("Could not find CKA_VALUE_LEN for the key\n");
+		return CKR_FUNCTION_FAILED;
+	}
+
+	CK_ULONG key_len = *((CK_ULONG*)(attr_key_len->pValue));
+	CK_BYTE_PTR pKey = (CK_BYTE_PTR)(attr_key->pValue);
+
+	switch(mech->mechanism) {
+	case CKM_AES_GCM:
+		rc = 0;
+		switch(key_len) {
+		case 16:
+			if (encrypt) {
+				rc = EVP_EncryptInit_ex(ecctx, EVP_aes_128_gcm(), NULL, NULL, NULL);
+			} else {
+				rc = EVP_DecryptInit_ex(ecctx, EVP_aes_128_gcm(), NULL, NULL, NULL);
+			}
+			break;
+		case 32:
+			if (encrypt) {
+				rc = EVP_EncryptInit_ex(ecctx, EVP_aes_256_gcm(), NULL, NULL, NULL);
+			} else {
+				rc = EVP_DecryptInit_ex(ecctx, EVP_aes_256_gcm(), NULL, NULL, NULL);
+			}
+			break;
+	  	}
+		if (rc != 1) {
+			TRACE_ERROR("Could not initilise cipher\n");
+			return CKR_MECHANISM_INVALID;
+		}
+		break;
+	default:
+		EVP_CIPHER_CTX_free(ecctx);
+		return CKR_MECHANISM_INVALID;
+	}
+
+
+	CK_GCM_PARAMS_PTR gcm = (CK_GCM_PARAMS_PTR)mech->pParameter;
+	if (rc == 1) {
+	  rc = EVP_CIPHER_CTX_ctrl(ecctx, EVP_CTRL_GCM_SET_IVLEN, gcm->ulIvLen, NULL);
+	}
+	
+	if (rc == 1) {
+		if (encrypt) {
+			rc = EVP_EncryptInit_ex(ecctx, NULL, NULL, pKey, gcm->pIv);
+		} else {
+			rc = EVP_DecryptInit_ex(ecctx, NULL, NULL, pKey, gcm->pIv);
+		}
+	}
+	
+	int len = 0;
+	if (rc == 1) {
+		if (encrypt) {
+			rc = EVP_EncryptUpdate(ecctx, NULL, &len, gcm->pAAD, gcm->ulAADLen);
+		} else {
+			rc = EVP_DecryptUpdate(ecctx, NULL, &len, gcm->pAAD, gcm->ulAADLen);
+		}
+	}
+	
+	if (!rc) {
+		EVP_CIPHER_CTX_free(ecctx);
+		ctx->context = NULL;
+		return CKR_FUNCTION_FAILED;
+	} else {
+		SOFT_GCM_CONTEXT_PTR p = (SOFT_GCM_CONTEXT_PTR)malloc(sizeof(struct SOFT_GCM_CONTEXT));
+		p->ctx = ecctx;
+		//		p->len = len;
+		p->tag_len = gcm->ulTagBits/8;
+		ctx->context = (CK_BYTE *)p;
+	}
+	
+	return CKR_OK;
+}
+
+CK_RV token_specific_aes_gcm(SESSION           *sess,
+			     ENCR_DECR_CONTEXT *ctx,
+			     CK_BYTE           *in_data,
+			     CK_ULONG          in_data_len,
+			     CK_BYTE           *out_data, 
+			     CK_ULONG          *out_data_len,
+			     CK_BYTE           encrypt) {
+	SOFT_GCM_CONTEXT_PTR p = (SOFT_GCM_CONTEXT_PTR)ctx->context;
+
+	int rc = 1;
+	int updatelen = *out_data_len;
+	/* Provide the message to be encrypted, and obtain the encrypted output.
+	 * EVP_EncryptUpdate can be called multiple times if necessary
+	 */
+	if (rc == 1) {
+		if (encrypt) {
+			rc = EVP_EncryptUpdate(p->ctx, out_data, &updatelen, in_data, in_data_len);
+		} else {
+			rc = EVP_DecryptUpdate(p->ctx, out_data, &updatelen, in_data, in_data_len - p->tag_len);
+		}
+	}
+	int written = updatelen;
+
+
+	if (rc == 1 && !encrypt) {
+		/* Set the tag */
+		rc = EVP_CIPHER_CTX_ctrl(p->ctx, EVP_CTRL_GCM_SET_TAG, p->tag_len, in_data + in_data_len - p->tag_len);
+	}
+
+	int finallen = *out_data_len - updatelen;
+	/* Finalise the encryption. Normally ciphertext bytes may be written at
+	 * this stage, but this does not occur in GCM mode
+	 */
+        if (rc == 1) {
+		if (encrypt) {
+			rc = EVP_EncryptFinal_ex(p->ctx, out_data + written, &finallen);
+		} else {
+			rc = EVP_DecryptFinal_ex(p->ctx, out_data + written, &finallen);
+		}
+	}
+
+	written += finallen;
+
+	if (rc == 1 && encrypt) {
+        	rc = *out_data_len >= written + p->tag_len;
+ 	}
+
+	if (rc == 1 && encrypt) {
+		/* Get the tag */
+		rc = EVP_CIPHER_CTX_ctrl(p->ctx, EVP_CTRL_GCM_GET_TAG, p->tag_len, out_data + written);
+	}
+
+	EVP_CIPHER_CTX_free(p->ctx);
+
+	if (rc == 1) {
+		if (encrypt) {
+			*out_data_len = written + p->tag_len;
+		} else {
+	 		*out_data_len = written;
+		}
+		return CKR_OK;
+	}
+
+	return CKR_FUNCTION_FAILED;
+}
+
+
+
+CK_RV token_specific_ec_generate_keypair(TEMPLATE *publ_tmpl,
+					 TEMPLATE *priv_tmpl) {
+  CK_ATTRIBUTE       * attr     = NULL;
+  CK_BBOOL             flag;
+  CK_RV                rc = CKR_OK;
+  const CK_BYTE*          ecParams = NULL;
+  CK_ULONG             ecParams_len = 0;
+  EC_KEY *eckey = NULL;
+
+  flag = template_attribute_find( publ_tmpl, CKA_EC_PARAMS, &attr );
+  if (!flag){
+    TRACE_ERROR("%s\n", ock_err(ERR_TEMPLATE_INCOMPLETE));
+    return CKR_TEMPLATE_INCOMPLETE;  // should never happen
+  }
+  ecParams = (const CK_BYTE_PTR)(attr->pValue);
+  ecParams_len = attr->ulValueLen;
+
+  EC_GROUP* group = NULL;
+  switch (ecParams[0]) {
+  case 0x06: // Named Curve
+    {
+      ASN1_OBJECT *o = d2i_ASN1_OBJECT(NULL, &ecParams, ecParams_len);
+      if (o) {
+	group = EC_GROUP_new_by_curve_name(OBJ_obj2nid(o));
+	EC_GROUP_set_asn1_flag(group, OPENSSL_EC_NAMED_CURVE);
+	EC_GROUP_set_point_conversion_form(group, POINT_CONVERSION_UNCOMPRESSED);
+      }
+    }
+    break;
+  case 0x30: // EC Parameters
+    group = d2i_ECPKParameters(NULL, &ecParams, ecParams_len);
+    break;
+  }
+
+  //app_RAND_load_file(NULL, NULL, 0);
+
+  if (group == NULL) {
+    rc = CKR_MECHANISM_PARAM_INVALID;
+    goto end;
+  }
+
+  eckey = EC_KEY_new();
+  if (eckey == NULL) {
+    rc = CKR_DEVICE_MEMORY;
+    goto end;
+  }
+
+  if (EC_KEY_set_group(eckey, group) == 0) {
+    rc = CKR_FUNCTION_FAILED;
+    goto end;
+  }
+
+  if (!EC_KEY_generate_key(eckey)) {
+    rc = CKR_FUNCTION_FAILED;
+    goto end;
+  }
+
+  CK_BYTE buffer[1024];
+  CK_BYTE_PTR bufferindex = buffer;
+  CK_ULONG written = i2d_ECPrivateKey(eckey, &bufferindex);
+
+  rc = build_attribute( CKA_VALUE, buffer, written, &attr );
+  if (rc != CKR_OK){
+    TRACE_DEVEL("build_attribute failed\n");
+    goto end;
+  }
+  template_update_attribute( priv_tmpl, attr );
+
+  bufferindex = buffer;
+  written = i2d_EC_PUBKEY(eckey, &bufferindex);
+  rc = build_attribute( CKA_VALUE, buffer, written, &attr );
+  if (rc != CKR_OK){
+    TRACE_DEVEL("build_attribute failed\n");
+    goto end;
+  }
+  template_update_attribute( publ_tmpl, attr );
+
+ end:
+
+  if (group) {
+    EC_GROUP_free(group);
+  }
+  if (eckey) {
+    EC_KEY_free(eckey);
+  }
+
+  return rc;
 }

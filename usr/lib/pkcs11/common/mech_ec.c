@@ -102,6 +102,12 @@ ckm_ec_key_pair_gen( TEMPLATE  * publ_tmpl,
 		TEMPLATE  * priv_tmpl )
 {
 	CK_RV rc;
+
+	if (token_specific.t_ec_generate_keypair == NULL) {
+		TRACE_ERROR("%s\n", ock_err(ERR_MECHANISM_INVALID));
+		return CKR_MECHANISM_INVALID;
+	}
+
 	rc = token_specific.t_ec_generate_keypair(publ_tmpl, priv_tmpl);
 	if (rc != CKR_OK)
 		TRACE_ERROR("Key Generation failed\n");
