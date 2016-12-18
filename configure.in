@@ -4,7 +4,7 @@ AC_INIT([openCryptoki],[3.6],[opencryptoki-tech@lists.sourceforge.net])
 dnl Needed for $target!
 AC_CANONICAL_SYSTEM
 
-AM_INIT_AUTOMAKE([foreign 1.6])
+AM_INIT_AUTOMAKE([foreign 1.6 subdir-objects])
 
 dnl Checks for header files.
 AC_DISABLE_STATIC
