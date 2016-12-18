@@ -1,3 +1,9 @@
+This is a clone of: https://sourceforge.net/projects/opencryptoki/
+
+With the primary goal of adding GCM and EC support into the softtok.
+
+------------------------------------------------------------------
+
 opencryptoki README
 Package version 3.6
 
