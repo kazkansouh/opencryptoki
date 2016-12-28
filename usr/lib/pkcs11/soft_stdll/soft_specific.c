@@ -2169,6 +2169,8 @@ MECH_LIST_ELEMENT mech_list[] = {
 #if !(NOEC)
 	{CKM_EC_KEY_PAIR_GEN, {160, 521, CKF_GENERATE_KEY_PAIR|
                                CKF_EC_F_P|CKF_EC_NAMEDCURVE|CKF_EC_UNCOMPRESS}},
+	{CKM_ECDSA, {160, 521, CKF_SIGN|CKF_VERIFY|CKF_EC_NAMEDCURVE|
+			       CKF_EC_F_P}},
 #endif
         {CKM_GENERIC_SECRET_KEY_GEN, {80, 2048, CKF_GENERATE}}
 };
@@ -2921,6 +2923,31 @@ CK_RV token_specific_aes_gcm(SESSION           *sess,
 }
 
 
+static EC_GROUP* token_specific_load_ec_group(CK_BYTE_PTR p,
+					      CK_ULONG len) {
+  if (len == 0) {
+    return NULL;
+  }
+  switch (p[0]) {
+  case 0x06: // Named Curve
+    {
+      ASN1_OBJECT *o = d2i_ASN1_OBJECT(NULL, (const CK_BYTE**)&p, len);
+
+      if (o) {
+	EC_GROUP *group = EC_GROUP_new_by_curve_name(OBJ_obj2nid(o));
+	ASN1_OBJECT_free(o);
+	EC_GROUP_set_asn1_flag(group, OPENSSL_EC_NAMED_CURVE);
+	EC_GROUP_set_point_conversion_form(group, POINT_CONVERSION_UNCOMPRESSED);
+	return group;
+      }
+    }
+    break;
+  case 0x30: // EC Parameters
+    return d2i_ECPKParameters(NULL, (const CK_BYTE**)&p, len);
+    break;
+  }
+  return NULL;
+}
 
 CK_RV token_specific_ec_generate_keypair(TEMPLATE *publ_tmpl,
 					 TEMPLATE *priv_tmpl) {
@@ -2939,25 +2966,7 @@ CK_RV token_specific_ec_generate_keypair(TEMPLATE *publ_tmpl,
   ecParams = (CK_BYTE_PTR)(attr->pValue);
   ecParams_len = attr->ulValueLen;
 
-  EC_GROUP* group = NULL;
-  switch (ecParams[0]) {
-  case 0x06: // Named Curve
-    {
-      ASN1_OBJECT *o = d2i_ASN1_OBJECT(NULL, (const CK_BYTE**)&ecParams, ecParams_len);
-      ecParams = (CK_BYTE_PTR)(attr->pValue);
-
-      if (o) {
-	group = EC_GROUP_new_by_curve_name(OBJ_obj2nid(o));
-	EC_GROUP_set_asn1_flag(group, OPENSSL_EC_NAMED_CURVE);
-	EC_GROUP_set_point_conversion_form(group, POINT_CONVERSION_UNCOMPRESSED);
-      }
-    }
-    break;
-  case 0x30: // EC Parameters
-    group = d2i_ECPKParameters(NULL, (const CK_BYTE**)&ecParams, ecParams_len);
-    ecParams = (CK_BYTE_PTR)(attr->pValue);
-    break;
-  }
+  EC_GROUP* group = token_specific_load_ec_group(ecParams, ecParams_len);
 
   //app_RAND_load_file(NULL, NULL, 0);
 
@@ -3040,4 +3049,118 @@ CK_RV token_specific_ec_generate_keypair(TEMPLATE *publ_tmpl,
   }
 
   return rc;
+}
+
+
+CK_RV
+token_specific_ec_sign(CK_BYTE  * in_data,
+		       CK_ULONG   in_data_len,
+		       CK_BYTE  * out_data,
+		       CK_ULONG * out_data_len,
+		       OBJECT   * key_obj ) {
+
+  CK_ATTRIBUTE *attr_key = NULL;
+  CK_ATTRIBUTE *attr_ecparam = NULL;
+
+  // get the key value
+  if (template_attribute_find(key_obj->template, CKA_VALUE, &attr_key) == FALSE) {
+    TRACE_ERROR("Could not find CKA_VALUE for the key\n");
+    return CKR_TEMPLATE_INCOMPLETE;
+  }
+
+  // get the ecparams value
+  if (template_attribute_find(key_obj->template, CKA_EC_PARAMS, &attr_ecparam) == FALSE) {
+    TRACE_ERROR("Could not find CKA_EC_PARAMS for the key\n");
+    return CKR_TEMPLATE_INCOMPLETE;
+  }
+
+  BIGNUM *bn_pkey = BN_bin2bn(attr_key->pValue, attr_key->ulValueLen, NULL);
+  if (!bn_pkey) {
+    TRACE_ERROR("Failed to parse private key from BN\n");
+    return CKR_FUNCTION_FAILED;
+  }
+
+  EC_KEY *eckey = EC_KEY_new();
+  if (!eckey) {
+    TRACE_ERROR("Failed to create new EC_KEY\n");
+    BN_free(bn_pkey);
+    return CKR_DEVICE_MEMORY;
+  }
+
+  if (EC_KEY_set_private_key(eckey, bn_pkey) != 1) {
+    TRACE_ERROR("Failed to set private key in EC_KEY\n");
+    BN_free(bn_pkey);
+    EC_KEY_free(eckey);
+    return CKR_FUNCTION_FAILED;
+  }
+  BN_free(bn_pkey);
+  bn_pkey = NULL;
+
+
+  EC_GROUP* group = token_specific_load_ec_group(attr_ecparam->pValue,
+						 attr_ecparam->ulValueLen);
+  if (!group) {
+    TRACE_ERROR("Failed to load EC_PARAMS\n");
+    EC_KEY_free(eckey);
+    return CKR_FUNCTION_FAILED;
+  }
+
+  if (EC_KEY_set_group(eckey, group) != 1) {
+    TRACE_ERROR("Failed to set EC_PARAMS in EC_KEY\n");
+    EC_KEY_free(eckey);
+    EC_GROUP_free(group);
+    return CKR_FUNCTION_FAILED;
+  }
+
+  EVP_PKEY *pkey = EVP_PKEY_new();
+  if (!pkey) {
+    TRACE_ERROR("Failed to create new EVP_PKEY\n");
+    EC_KEY_free(eckey);
+    EC_GROUP_free(group);
+    return CKR_DEVICE_MEMORY;
+  }
+
+  EVP_PKEY_set1_EC_KEY(pkey, eckey);
+  EC_KEY_free(eckey);
+
+  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(pkey, NULL);
+  if (!ctx) {
+    TRACE_ERROR("Failed to create signing context\n");
+    EVP_PKEY_free(pkey);
+    EC_GROUP_free(group);
+    return 1;
+  }
+
+  if (EVP_PKEY_sign_init(ctx) != 1) {
+    TRACE_ERROR("Failed to initilise signing context\n");
+    EVP_PKEY_free(pkey);
+    EVP_PKEY_CTX_free(ctx);
+    EC_GROUP_free(group);
+    return 1;
+  }
+
+  if (EVP_PKEY_sign(ctx,
+		    out_data, out_data_len,
+		    in_data, in_data_len) != 1) {
+    TRACE_ERROR("Failed to sign\n");
+    EVP_PKEY_free(pkey);
+    EVP_PKEY_CTX_free(ctx);
+    EC_GROUP_free(group);
+    return 1;    
+  }
+  EVP_PKEY_free(pkey);
+  EVP_PKEY_CTX_free(ctx);
+  EC_GROUP_free(group);
+
+
+  return CKR_OK;
+}
+
+CK_RV
+token_specific_ec_verify(CK_BYTE  * in_data,
+			 CK_ULONG   in_data_len,
+			 CK_BYTE  * out_data,
+			 CK_ULONG   out_data_len,
+			 OBJECT   * key_obj ) {
+  return CKR_FUNCTION_FAILED;
 }
