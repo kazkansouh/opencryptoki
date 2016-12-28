@@ -2968,8 +2968,6 @@ CK_RV token_specific_ec_generate_keypair(TEMPLATE *publ_tmpl,
 
   EC_GROUP* group = token_specific_load_ec_group(ecParams, ecParams_len);
 
-  //app_RAND_load_file(NULL, NULL, 0);
-
   if (group == NULL) {
     rc = CKR_MECHANISM_PARAM_INVALID;
     goto end;
@@ -2990,7 +2988,6 @@ CK_RV token_specific_ec_generate_keypair(TEMPLATE *publ_tmpl,
     rc = CKR_FUNCTION_FAILED;
     goto end;
   }
-
 
   const BIGNUM *bn_privkey = EC_KEY_get0_private_key(eckey);
   if (bn_privkey == NULL) {
@@ -3105,6 +3102,7 @@ token_specific_ec_sign(CK_BYTE  * in_data,
     return CKR_FUNCTION_FAILED;
   }
 
+  /* creates a copy of group in eckey */
   if (EC_KEY_set_group(eckey, group) != 1) {
     TRACE_ERROR("Failed to set EC_PARAMS in EC_KEY\n");
     EC_KEY_free(eckey);
@@ -3112,46 +3110,46 @@ token_specific_ec_sign(CK_BYTE  * in_data,
     return CKR_FUNCTION_FAILED;
   }
 
-  EVP_PKEY *pkey = EVP_PKEY_new();
-  if (!pkey) {
-    TRACE_ERROR("Failed to create new EVP_PKEY\n");
-    EC_KEY_free(eckey);
-    EC_GROUP_free(group);
-    return CKR_DEVICE_MEMORY;
-  }
+  int degree = EC_GROUP_get_degree(group);
+  int octets = degree / 8 + (degree % 8 ? 1 : 0);
 
-  EVP_PKEY_set1_EC_KEY(pkey, eckey);
-  EC_KEY_free(eckey);
-
-  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(pkey, NULL);
-  if (!ctx) {
-    TRACE_ERROR("Failed to create signing context\n");
-    EVP_PKEY_free(pkey);
-    EC_GROUP_free(group);
-    return 1;
-  }
-
-  if (EVP_PKEY_sign_init(ctx) != 1) {
-    TRACE_ERROR("Failed to initilise signing context\n");
-    EVP_PKEY_free(pkey);
-    EVP_PKEY_CTX_free(ctx);
-    EC_GROUP_free(group);
-    return 1;
-  }
-
-  if (EVP_PKEY_sign(ctx,
-		    out_data, out_data_len,
-		    in_data, in_data_len) != 1) {
-    TRACE_ERROR("Failed to sign\n");
-    EVP_PKEY_free(pkey);
-    EVP_PKEY_CTX_free(ctx);
-    EC_GROUP_free(group);
-    return 1;    
-  }
-  EVP_PKEY_free(pkey);
-  EVP_PKEY_CTX_free(ctx);
   EC_GROUP_free(group);
+  group = NULL;
 
+  if (*out_data_len < octets*2) {
+    TRACE_ERROR("Output buffer too small for result\n");
+    EC_KEY_free(eckey);
+    return CKR_BUFFER_TOO_SMALL;
+  }
+   
+  ECDSA_SIG *sig = ECDSA_do_sign(in_data, in_data_len, eckey);
+  EC_KEY_free(eckey);
+  if (!sig) {
+    TRACE_ERROR("Failed to sign\n");
+    return 1;
+  }
+
+  int r_len = BN_num_bytes(sig->r);
+  if (r_len > octets) {
+    TRACE_ERROR("r is too long for curve\n");
+    ECDSA_SIG_free(sig);
+    return 1;
+  }
+  int s_len = BN_num_bytes(sig->s);
+  if (s_len > octets) {
+    TRACE_ERROR("s is too long for curve\n");
+    ECDSA_SIG_free(sig);
+    return 1;
+  }
+
+  memset(out_data, 0, octets*2);
+
+  BN_bn2bin(sig->r, out_data + (octets - r_len));
+  BN_bn2bin(sig->s, out_data + octets + (octets - s_len));
+
+  ECDSA_SIG_free(sig);
+
+  *out_data_len = octets * 2;
 
   return CKR_OK;
 }
@@ -3162,5 +3160,75 @@ token_specific_ec_verify(CK_BYTE  * in_data,
 			 CK_BYTE  * out_data,
 			 CK_ULONG   out_data_len,
 			 OBJECT   * key_obj ) {
-  return CKR_FUNCTION_FAILED;
+  CK_ATTRIBUTE *attr_ecpoint = NULL;
+  CK_ATTRIBUTE *attr_ecparam = NULL;
+
+  // get the key value
+  if (template_attribute_find(key_obj->template, CKA_EC_POINT, &attr_ecpoint) == FALSE) {
+    TRACE_ERROR("Could not find CKA_EC_POINT for the key\n");
+    return CKR_TEMPLATE_INCOMPLETE;
+  }
+
+  // get the ecparams value
+  if (template_attribute_find(key_obj->template, CKA_EC_PARAMS, &attr_ecparam) == FALSE) {
+    TRACE_ERROR("Could not find CKA_EC_PARAMS for the key\n");
+    return CKR_TEMPLATE_INCOMPLETE;
+  }
+
+  EC_KEY *eckey = EC_KEY_new();
+  if (!eckey) {
+    TRACE_ERROR("Failed to create new EC_KEY\n");
+    return CKR_DEVICE_MEMORY;
+  }
+
+  EC_GROUP* group = token_specific_load_ec_group(attr_ecparam->pValue,
+						 attr_ecparam->ulValueLen);
+  if (!group) {
+    TRACE_ERROR("Failed to load EC_PARAMS\n");
+    EC_KEY_free(eckey);
+    return CKR_FUNCTION_FAILED;
+  }
+
+  /* creates a copy of group in eckey */
+  if (EC_KEY_set_group(eckey, group) != 1) {
+    TRACE_ERROR("Failed to set EC_PARAMS in EC_KEY\n");
+    EC_KEY_free(eckey);
+    EC_GROUP_free(group);
+    return CKR_FUNCTION_FAILED;
+  }
+
+  int degree = EC_GROUP_get_degree(group);
+  int octets = degree / 8 + (degree % 8 ? 1 : 0);
+
+  EC_GROUP_free(group);
+  group = NULL;
+
+  CK_BYTE_PTR ecpoint = (CK_BYTE_PTR)attr_ecpoint->pValue;
+  if(!o2i_ECPublicKey(&eckey,
+		      (const unsigned char **)&ecpoint,
+		      attr_ecpoint->ulValueLen)) {
+    TRACE_ERROR("Failed to create new EC_KEY\n");
+    return CKR_FUNCTION_FAILED;
+  }
+
+  if (out_data_len != octets * 2) {
+    TRACE_ERROR("Signature not valid length\n");
+    EC_KEY_free(eckey);
+    return CKR_SIGNATURE_LEN_RANGE;
+  }
+
+  ECDSA_SIG sig;
+  sig.r = BN_bin2bn(out_data, octets, NULL);
+  sig.s = BN_bin2bn(out_data + octets, octets, NULL);
+
+  int rc = ECDSA_do_verify(in_data, in_data_len, &sig, eckey);
+  EC_KEY_free(eckey);
+  BN_free(sig.r);
+  BN_free(sig.s);
+  if (rc != 1) {
+    TRACE_ERROR("Failed to verify signature\n");
+    return CKR_SIGNATURE_INVALID;
+  }
+
+  return CKR_OK;
 }
