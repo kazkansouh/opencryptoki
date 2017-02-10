@@ -900,6 +900,7 @@ key_mgr_wrap_key( SESSION           * sess,
       case CKM_AES_CFB8:
       case CKM_AES_CFB64:
       case CKM_AES_CFB128:
+      case CKM_AES_GCM:
          if ((class != CKO_SECRET_KEY) && (class != CKO_PRIVATE_KEY)) {
             TRACE_ERROR("Specified mechanism only wraps secret & private keys.\n");
             return CKR_KEY_NOT_WRAPPABLE;
@@ -1020,6 +1021,7 @@ key_mgr_wrap_key( SESSION           * sess,
       case CKM_AES_CFB8:
       case CKM_AES_CFB64:
       case CKM_AES_CFB128:
+      case CKM_AES_GCM:
 	 rc = ckm_aes_wrap_format( length_only, &data, &data_len );
 	 if (rc != CKR_OK) {
 	    TRACE_DEVEL("ckm_aes_wrap_format failed.\n");
@@ -1189,6 +1191,7 @@ key_mgr_unwrap_key( SESSION           * sess,
       case CKM_DES_CBC_PAD:
       case CKM_DES3_CBC_PAD:
       case CKM_AES_CBC_PAD:
+      case CKM_AES_GCM:
          if ((keyclass != CKO_SECRET_KEY) && (keyclass != CKO_PRIVATE_KEY)) {
             TRACE_ERROR("Specified mech unwraps secret & private keys only.\n");
             return CKR_ARGUMENTS_BAD;
