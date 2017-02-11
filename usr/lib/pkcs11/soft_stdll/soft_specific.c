@@ -843,7 +843,6 @@ os_specific_rsa_keygen(TEMPLATE *publ_tmpl,  TEMPLATE *priv_tmpl)
 	RSA *rsa;
 	const BIGNUM *bignum;
 	CK_BYTE *ssl_ptr;
-	unsigned long e = 0;
 
 	flag = template_attribute_find( publ_tmpl, CKA_MODULUS_BITS, &attr );
 	if (!flag){
@@ -864,24 +863,14 @@ os_specific_rsa_keygen(TEMPLATE *publ_tmpl,  TEMPLATE *priv_tmpl)
 		return CKR_TEMPLATE_INCOMPLETE;
 	}
 
-	if (publ_exp->ulValueLen > sizeof(CK_ULONG)) {
-		TRACE_ERROR("%s\n", ock_err(ERR_ATTRIBUTE_VALUE_INVALID));
-		return CKR_ATTRIBUTE_VALUE_INVALID;
+	BIGNUM *bn_e = BN_bin2bn(publ_exp->pValue, publ_exp->ulValueLen, NULL);
+	if (!bn_e) {
+	  TRACE_ERROR("Failed to parse public exponent from BN\n");
+	  return CKR_FUNCTION_FAILED;
 	}
 
-	if (publ_exp->ulValueLen == sizeof(CK_ULONG)) {
-		e = *(CK_ULONG *)publ_exp->pValue;
-	} else {
-		memcpy(&e, publ_exp->pValue, publ_exp->ulValueLen);
-
-		if (sizeof(CK_ULONG) == 4)
-			e = le32toh(e);
-		else
-			e = le64toh(e);
-	}
-
-	rsa = RSA_generate_key(mod_bits, e, NULL, NULL);
-	if (rsa == NULL) {
+	rsa = RSA_new();
+	if (RSA_generate_key_ex(rsa, mod_bits, bn_e, NULL) != 1) {
                 TRACE_ERROR("%s\n", ock_err(ERR_FUNCTION_FAILED));
                 return CKR_FUNCTION_FAILED;
         }
@@ -3129,13 +3118,15 @@ token_specific_ec_sign(CK_BYTE  * in_data,
     return 1;
   }
 
-  int r_len = BN_num_bytes(sig->r);
+  const BIGNUM *r, *s;
+  ECDSA_SIG_get0(sig, &r, &s);
+  int r_len = BN_num_bytes(r);
   if (r_len > octets) {
     TRACE_ERROR("r is too long for curve\n");
     ECDSA_SIG_free(sig);
     return 1;
   }
-  int s_len = BN_num_bytes(sig->s);
+  int s_len = BN_num_bytes(s);
   if (s_len > octets) {
     TRACE_ERROR("s is too long for curve\n");
     ECDSA_SIG_free(sig);
@@ -3144,8 +3135,8 @@ token_specific_ec_sign(CK_BYTE  * in_data,
 
   memset(out_data, 0, octets*2);
 
-  BN_bn2bin(sig->r, out_data + (octets - r_len));
-  BN_bn2bin(sig->s, out_data + octets + (octets - s_len));
+  BN_bn2bin(r, out_data + (octets - r_len));
+  BN_bn2bin(s, out_data + octets + (octets - s_len));
 
   ECDSA_SIG_free(sig);
 
@@ -3217,14 +3208,16 @@ token_specific_ec_verify(CK_BYTE  * in_data,
     return CKR_SIGNATURE_LEN_RANGE;
   }
 
-  ECDSA_SIG sig;
-  sig.r = BN_bin2bn(out_data, octets, NULL);
-  sig.s = BN_bin2bn(out_data + octets, octets, NULL);
+  BIGNUM *r = BN_bin2bn(out_data, octets, NULL);
+  BIGNUM *s = BN_bin2bn(out_data + octets, octets, NULL);
 
-  int rc = ECDSA_do_verify(in_data, in_data_len, &sig, eckey);
+  ECDSA_SIG* sig = ECDSA_SIG_new();
+  ECDSA_SIG_set0(sig, r, s);
+
+  int rc = ECDSA_do_verify(in_data, in_data_len, sig, eckey);
   EC_KEY_free(eckey);
-  BN_free(sig.r);
-  BN_free(sig.s);
+  BN_free(r);
+  BN_free(s);
   if (rc != 1) {
     TRACE_ERROR("Failed to verify signature\n");
     return CKR_SIGNATURE_INVALID;
