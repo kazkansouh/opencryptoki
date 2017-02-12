@@ -665,7 +665,7 @@ token_specific_tdes_cbc(CK_BYTE * in_data,
 // convert from the local PKCS11 template representation to
 // the underlying requirement
 // returns the pointer to the local key representation
-void *
+RSA *
 rsa_convert_public_key( OBJECT    * key_obj )
 {
 	CK_BBOOL           rc;
@@ -704,10 +704,10 @@ rsa_convert_public_key( OBJECT    * key_obj )
 	BN_bin2bn((unsigned char *)pub_exp->pValue, pub_exp->ulValueLen, bn_exp);
 	RSA_set0_key(rsa, bn_mod, bn_exp, NULL);
 
-	return (void *)rsa;
+	return rsa;
 }
 
-void *
+RSA *
 rsa_convert_private_key(OBJECT *key_obj)
 {
 	CK_ATTRIBUTE      * modulus  = NULL;
@@ -799,7 +799,7 @@ rsa_convert_private_key(OBJECT *key_obj)
 		BN_bin2bn((unsigned char *)priv_exp->pValue, priv_exp->ulValueLen, bn_priv_exp);
 		RSA_set0_key(rsa, bn_mod, bn_pub_exp, bn_priv_exp);
 	}
-	return (void *)rsa;
+	return rsa;
 }
 
 #define RNG_BUF_SIZE 100
@@ -1110,7 +1110,7 @@ os_specific_rsa_encrypt( CK_BYTE   * in_data,
 	int size;
 
 	// Convert the local representation to an RSA representation
-	rsa = (RSA *)rsa_convert_public_key(key_obj);
+	rsa = rsa_convert_public_key(key_obj);
 	if (rsa==NULL) {
 		TRACE_ERROR("%s\n", ock_err(ERR_FUNCTION_FAILED));
 		rc = CKR_FUNCTION_FAILED;
@@ -1143,7 +1143,7 @@ os_specific_rsa_decrypt( CK_BYTE   * in_data,
 	int size;
 
 	// Convert the local key representation to an RSA key representaion
-	rsa = (RSA *)rsa_convert_private_key(key_obj);
+	rsa = rsa_convert_private_key(key_obj);
 	if (rsa == NULL) {
 		TRACE_ERROR("%s\n", ock_err(ERR_FUNCTION_FAILED));
 		rc = CKR_FUNCTION_FAILED;
