@@ -389,6 +389,8 @@ token_spec_t token_specific = {
 	&token_specific_aes_ofb,
 	&token_specific_aes_cfb,
 	&token_specific_aes_mac,
+	NULL,                   // aes_key_wrap_init
+	NULL,                   // aes_key_wrap
 	// DSA
 	NULL,			// dsa_generate_keypair
 	NULL,			// dsa_sign

@@ -577,6 +577,12 @@ CK_RV token_specific_aes_gcm_update(SESSION *, ENCR_DECR_CONTEXT *, CK_BYTE *,
 CK_RV token_specific_aes_gcm_final(SESSION *, ENCR_DECR_CONTEXT *, CK_BYTE *,
 				   CK_ULONG *, CK_BYTE);
 
+CK_RV token_specific_aes_key_wrap_init(SESSION *, ENCR_DECR_CONTEXT *,
+				       CK_MECHANISM *, CK_OBJECT_HANDLE, CK_BYTE);
+
+CK_RV token_specific_aes_key_wrap(SESSION *, ENCR_DECR_CONTEXT *, CK_BYTE *,
+				  CK_ULONG, CK_BYTE *, CK_ULONG *, CK_BYTE);
+
 CK_RV
 token_specific_aes_ofb( CK_BYTE *,
                         CK_ULONG,

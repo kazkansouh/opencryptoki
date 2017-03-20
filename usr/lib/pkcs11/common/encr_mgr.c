@@ -826,6 +826,38 @@ encr_mgr_init( SESSION           * sess,
 		}
 	}
 	break;
+	case CKM_AES_KEY_WRAP:
+	{
+		if (mech->pParameter && mech->ulParameterLen != 8) {
+			TRACE_ERROR("%s\n", ock_err(ERR_MECHANISM_PARAM_INVALID));
+			return CKR_MECHANISM_PARAM_INVALID;
+		}
+		rc = template_attribute_find(key_obj->template, CKA_KEY_TYPE,
+					     &attr);
+		if (rc == FALSE) {
+			TRACE_ERROR("Could not find CKA_KEY_TYPE for key.\n");
+			return CKR_FUNCTION_FAILED;
+		} else {
+			keytype = *(CK_KEY_TYPE *)attr->pValue;
+			if (keytype != CKK_AES) {
+				TRACE_ERROR("%s\n",
+					    ock_err(ERR_KEY_TYPE_INCONSISTENT));
+				return CKR_KEY_TYPE_INCONSISTENT;
+			}
+		}
+
+		// multi part not supported
+		ctx->context_len = 0;
+		ctx->context     = NULL;
+
+		rc = aes_key_wrap_init(sess, ctx, mech, key_handle, 1);
+		if (rc != CKR_OK) {
+			TRACE_ERROR("Could not initialize AES KEY WRAP parms.\n");
+			return CKR_FUNCTION_FAILED;
+		}
+
+	}
+	break;
 
      case CKM_AES_OFB:
      case CKM_AES_CFB8:
@@ -1067,6 +1099,9 @@ encr_mgr_encrypt( SESSION           *sess,
 				 out_data, out_data_len );
 	case CKM_AES_GCM:
 	   return aes_gcm_encrypt(sess, length_only, ctx, in_data, in_data_len,
+				  out_data, out_data_len);
+      case CKM_AES_KEY_WRAP:
+          return aes_key_wrap(sess, length_only, ctx, in_data, in_data_len,
 				  out_data, out_data_len);
       case CKM_AES_OFB:
           return aes_ofb_encrypt( sess,     length_only,

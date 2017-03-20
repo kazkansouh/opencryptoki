@@ -1094,6 +1094,8 @@ typedef CK_ULONG          CK_MECHANISM_TYPE;
 #define CKM_AES_CFB8                   0x00002106
 #define CKM_AES_CFB128                 0x00002107
 
+#define CKM_AES_KEY_WRAP               0x00002109
+
 #define CKM_VENDOR_DEFINED             0x80000000
 
 typedef CK_MECHANISM_TYPE CK_PTR CK_MECHANISM_TYPE_PTR;

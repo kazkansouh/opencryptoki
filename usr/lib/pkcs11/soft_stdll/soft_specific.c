@@ -2154,6 +2154,7 @@ MECH_LIST_ELEMENT mech_list[] = {
 	{CKM_AES_CBC, {16, 32, CKF_ENCRYPT|CKF_DECRYPT|CKF_WRAP|CKF_UNWRAP}},
 	{CKM_AES_CBC_PAD, {16, 32, CKF_ENCRYPT|CKF_DECRYPT|CKF_WRAP|CKF_UNWRAP}},
 	{CKM_AES_GCM, {16, 32, CKF_ENCRYPT|CKF_DECRYPT|CKF_WRAP|CKF_UNWRAP}},
+	{CKM_AES_KEY_WRAP, {16, 32, CKF_WRAP|CKF_UNWRAP}},
 #endif
 #if !(NOEC)
 	{CKM_EC_KEY_PAIR_GEN, {160, 521, CKF_GENERATE_KEY_PAIR|
@@ -3224,4 +3225,121 @@ token_specific_ec_verify(CK_BYTE  * in_data,
   }
 
   return CKR_OK;
+}
+
+typedef struct SOFT_AES_KEY_WRAP_CONTEXT {
+  AES_KEY master;
+  CK_BYTE iv[8];
+} *SOFT_AES_KEY_WRAP_CONTEXT_PTR;
+
+CK_RV token_specific_aes_key_wrap_init(SESSION           *sess,
+				       ENCR_DECR_CONTEXT *ctx,
+				       CK_MECHANISM      *mech,
+				       CK_OBJECT_HANDLE  hkey,
+				       CK_BYTE           encrypt) {
+	int rc;
+	OBJECT *key = NULL;
+
+	rc = object_mgr_find_in_map1(hkey, &key);
+	if (rc != CKR_OK) {
+		TRACE_ERROR("Failed to find specified object.\n");
+		return rc;
+	}
+
+	CK_ATTRIBUTE *attr_key = NULL;
+	CK_ATTRIBUTE *attr_key_len = NULL;
+
+	// get the key value
+	if (template_attribute_find(key->template, CKA_VALUE, &attr_key) == FALSE) {
+		TRACE_ERROR("Could not find CKA_VALUE for the key\n");
+		return CKR_FUNCTION_FAILED;
+	}
+
+	// get the key value len
+	if (template_attribute_find(key->template, CKA_VALUE_LEN, &attr_key_len) == FALSE) {
+		TRACE_ERROR("Could not find CKA_VALUE_LEN for the key\n");
+		return CKR_FUNCTION_FAILED;
+	}
+
+	CK_ULONG key_len = *((CK_ULONG*)(attr_key_len->pValue));
+	CK_BYTE_PTR pKey = (CK_BYTE_PTR)(attr_key->pValue);
+
+	if (mech->mechanism != CKM_AES_KEY_WRAP) {
+	  TRACE_ERROR("Must be called with mech: CKM_AES_KEY_WRAP\n");
+	  return CKR_MECHANISM_INVALID;
+	}
+
+	if (key_len != 16) {
+	  TRACE_ERROR("Must be called with 128 AES key\n");
+	  return CKR_KEY_SIZE_RANGE;
+	}
+
+	if (mech->pParameter && mech->ulParameterLen != 8) {
+	  TRACE_ERROR("Invalide IV provided (must be null or 8 bytes)\n");
+	  return CKR_MECHANISM_PARAM_INVALID;
+	}
+
+	SOFT_AES_KEY_WRAP_CONTEXT_PTR p =
+	  (SOFT_AES_KEY_WRAP_CONTEXT_PTR)malloc(sizeof(struct SOFT_AES_KEY_WRAP_CONTEXT));
+
+	if (encrypt) {
+	  if (AES_set_encrypt_key(pKey, 128, &p->master)) {
+	    free(p);
+	    TRACE_ERROR("Failed to call AES_set_encrypt_key\n");
+	    return CKR_FUNCTION_FAILED;
+	  }
+	} else {
+	  if (AES_set_decrypt_key(pKey, 128, &p->master)) {
+	    free(p);
+	    TRACE_ERROR("Failed to call AES_set_decrypt_key\n");
+	    return CKR_FUNCTION_FAILED;
+	  }
+	}
+
+	if (mech->pParameter) {
+	  memcpy(p->iv, mech->pParameter, 8);
+	} else {
+	  // default value for iv
+	  memset(p->iv, 0xA6, 8);
+	}
+
+	ctx->context = (CK_BYTE *)p;
+
+	return CKR_OK;
+}
+
+CK_RV token_specific_aes_key_wrap(SESSION           *sess,
+				  ENCR_DECR_CONTEXT *ctx,
+				  CK_BYTE           *in_data,
+				  CK_ULONG          in_data_len,
+				  CK_BYTE           *out_data,
+				  CK_ULONG          *out_data_len,
+				  CK_BYTE           encrypt) {
+        SOFT_AES_KEY_WRAP_CONTEXT_PTR p = (SOFT_AES_KEY_WRAP_CONTEXT_PTR)ctx->context;
+
+        if (encrypt){
+	  if (*out_data_len < in_data_len + 8) {
+	    TRACE_ERROR("Output buffer too small for result\n");
+	    return CKR_BUFFER_TOO_SMALL;
+	  }
+
+	  if ((*out_data_len = AES_wrap_key(&p->master, p->iv, out_data, in_data, in_data_len)) == 0) {
+	    TRACE_ERROR("Failed to call AES_wrap_key\n");
+	    return CKR_FUNCTION_FAILED;
+	  }
+	} else {
+
+          if (*out_data_len < in_data_len - 8) {
+	    TRACE_ERROR("Output buffer too small for result\n");
+	    return CKR_BUFFER_TOO_SMALL;
+	  }
+
+          if ((*out_data_len = AES_unwrap_key(&p->master, p->iv, out_data, in_data, in_data_len)) == 0) {
+	    TRACE_ERROR("Failed to call AES_wrap_key\n");
+	    return CKR_FUNCTION_FAILED;
+	  }
+        }
+
+
+	return CKR_OK;
 }

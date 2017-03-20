@@ -914,6 +914,7 @@ key_mgr_wrap_key( SESSION           * sess,
       case CKM_RSA_PKCS_OAEP:
       case CKM_RSA_PKCS:
       case CKM_RSA_X_509:
+      case CKM_AES_KEY_WRAP:
          if (class != CKO_SECRET_KEY){
             TRACE_ERROR("Specified mechanism only wraps secret keys.\n");
             return CKR_KEY_NOT_WRAPPABLE;
@@ -1022,6 +1023,7 @@ key_mgr_wrap_key( SESSION           * sess,
       case CKM_AES_CFB64:
       case CKM_AES_CFB128:
       case CKM_AES_GCM:
+      case CKM_AES_KEY_WRAP:
 	 rc = ckm_aes_wrap_format( length_only, &data, &data_len );
 	 if (rc != CKR_OK) {
 	    TRACE_DEVEL("ckm_aes_wrap_format failed.\n");
@@ -1170,6 +1172,7 @@ key_mgr_unwrap_key( SESSION           * sess,
       case CKM_RSA_PKCS_OAEP:
       case CKM_RSA_PKCS:
       case CKM_RSA_X_509:
+      case CKM_AES_KEY_WRAP:
          if (keyclass != CKO_SECRET_KEY){
             TRACE_ERROR("The specified mechanism unwraps secret keys only.\n");
             return CKR_ARGUMENTS_BAD;

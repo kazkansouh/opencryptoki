@@ -3431,3 +3431,94 @@ ckm_aes_wrap_format( CK_BBOOL    length_only,
 
    return CKR_OK;
 }
+
+//
+//
+CK_RV aes_key_wrap_init(SESSION *sess, ENCR_DECR_CONTEXT *ctx, CK_MECHANISM *mech,
+			CK_OBJECT_HANDLE key, CK_BYTE direction)
+{
+	if (token_specific.t_aes_key_wrap_init == NULL) {
+		TRACE_ERROR("%s\n", ock_err(ERR_MECHANISM_INVALID));
+		return CKR_MECHANISM_INVALID;
+	}
+
+	return token_specific.t_aes_key_wrap_init(sess, ctx, mech, key, direction);
+}
+
+//
+//
+CK_RV aes_key_wrap(SESSION *sess, CK_BBOOL length_only,
+		   ENCR_DECR_CONTEXT	*ctx, CK_BYTE *in_data,
+		   CK_ULONG in_data_len, CK_BYTE *out_data,
+		   CK_ULONG *out_data_len)
+{
+	CK_RV rc;
+
+	if (!sess || !ctx || !in_data || !out_data_len) {
+		TRACE_ERROR("%s received bad argument(s)\n", __FUNCTION__);
+		return CKR_FUNCTION_FAILED;
+	}
+
+	if (length_only == TRUE) {
+		*out_data_len = in_data_len + 8;
+		return CKR_OK;
+	}
+
+	if (*out_data_len < in_data_len + 8) {
+		*out_data_len = in_data_len + 8;
+		TRACE_ERROR("%s\n", ock_err(ERR_BUFFER_TOO_SMALL));
+		return CKR_BUFFER_TOO_SMALL;
+	}
+
+	if (token_specific.t_aes_key_wrap == NULL) {
+		TRACE_ERROR("%s\n", ock_err(ERR_MECHANISM_INVALID));
+		return CKR_MECHANISM_INVALID;
+	}
+
+	rc = token_specific.t_aes_key_wrap(sess, ctx , in_data, in_data_len,
+					   out_data, out_data_len, 1);
+	if (rc != CKR_OK)
+		TRACE_ERROR("Token specific aes key wrap failed:  %02lx\n",
+			    rc);
+	return rc;
+
+}
+
+//
+//
+CK_RV aes_key_unwrap(SESSION *sess, CK_BBOOL length_only,
+		   ENCR_DECR_CONTEXT	*ctx, CK_BYTE *in_data,
+		   CK_ULONG in_data_len, CK_BYTE *out_data,
+		   CK_ULONG *out_data_len)
+{
+	CK_RV rc;
+
+	if (!sess || !ctx || !in_data || !out_data_len) {
+		TRACE_ERROR("%s received bad argument(s)\n", __FUNCTION__);
+		return CKR_FUNCTION_FAILED;
+	}
+
+	if (length_only == TRUE) {
+		*out_data_len = in_data_len - 8;
+		return CKR_OK;
+	}
+
+	if (*out_data_len < in_data_len - 8) {
+		*out_data_len = in_data_len - 8;
+		TRACE_ERROR("%s\n", ock_err(ERR_BUFFER_TOO_SMALL));
+		return CKR_BUFFER_TOO_SMALL;
+	}
+
+	if (token_specific.t_aes_key_wrap == NULL) {
+		TRACE_ERROR("%s\n", ock_err(ERR_MECHANISM_INVALID));
+		return CKR_MECHANISM_INVALID;
+	}
+
+	rc = token_specific.t_aes_key_wrap(sess, ctx , in_data, in_data_len,
+					   out_data, out_data_len, 0);
+	if (rc != CKR_OK)
+		TRACE_ERROR("Token specific aes key wrap failed:  %02lx\n",
+			    rc);
+	return rc;
+
+}

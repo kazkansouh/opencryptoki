@@ -503,6 +503,12 @@ struct token_specific_struct {
 
         CK_RV(*t_aes_mac)(CK_BYTE *, CK_ULONG,   OBJECT *, CK_BYTE *);
 
+	CK_RV(*t_aes_key_wrap_init) (SESSION *, ENCR_DECR_CONTEXT *, CK_MECHANISM *,
+				     CK_OBJECT_HANDLE, CK_BYTE);
+
+	CK_RV(*t_aes_key_wrap) (SESSION *, ENCR_DECR_CONTEXT *, CK_BYTE *, CK_ULONG,
+			   CK_BYTE *, CK_ULONG *, CK_BYTE);
+
 	// Token Specific DSA functions
 	CK_RV(*t_dsa_generate_keypair) (TEMPLATE *, TEMPLATE *);
 
