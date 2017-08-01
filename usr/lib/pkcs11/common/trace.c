@@ -402,7 +402,7 @@ void set_trace(struct trace_handle_t t_handle)
 
 void trace_finalize(void)
 {
-	if (trace.fd)
+	if (trace.fd != -1)
 		close(trace.fd);
 	trace.fd = -1;
 	trace.level = 0;
