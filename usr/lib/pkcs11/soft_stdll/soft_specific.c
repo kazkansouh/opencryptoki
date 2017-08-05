@@ -2736,8 +2736,8 @@ CK_RV token_specific_generic_secret_key_gen(TEMPLATE *tmpl)
 
 typedef struct SOFT_GCM_CONTEXT {
   EVP_CIPHER_CTX *ctx;
-  //  int len;
   int tag_len;
+  CK_BYTE *pushed_ctx;
 } *SOFT_GCM_CONTEXT_PTR;
 
 CK_RV token_specific_aes_gcm_init(SESSION           *sess,
@@ -2833,13 +2833,12 @@ CK_RV token_specific_aes_gcm_init(SESSION           *sess,
 	
 	if (!rc) {
 		EVP_CIPHER_CTX_free(ecctx);
-		ctx->context = NULL;
 		return CKR_FUNCTION_FAILED;
 	} else {
 		SOFT_GCM_CONTEXT_PTR p = (SOFT_GCM_CONTEXT_PTR)malloc(sizeof(struct SOFT_GCM_CONTEXT));
 		p->ctx = ecctx;
-		//		p->len = len;
 		p->tag_len = gcm->ulTagBits/8;
+		p->pushed_ctx = ctx->context;
 		ctx->context = (CK_BYTE *)p;
 	}
 	
@@ -2898,18 +2897,22 @@ CK_RV token_specific_aes_gcm(SESSION           *sess,
 		rc = EVP_CIPHER_CTX_ctrl(p->ctx, EVP_CTRL_GCM_GET_TAG, p->tag_len, out_data + written);
 	}
 
-	EVP_CIPHER_CTX_free(p->ctx);
-
 	if (rc == 1) {
 		if (encrypt) {
 			*out_data_len = written + p->tag_len;
 		} else {
 	 		*out_data_len = written;
 		}
-		return CKR_OK;
+		rc = CKR_OK;
+	} else {
+	  rc = CKR_FUNCTION_FAILED;
 	}
 
-	return CKR_FUNCTION_FAILED;
+	ctx->context = p->pushed_ctx;
+	EVP_CIPHER_CTX_free(p->ctx);
+	free(p);
+
+	return rc;
 }
 
 

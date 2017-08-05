@@ -1909,8 +1909,7 @@ CK_RV SC_Encrypt(ST_SESSION_HANDLE *sSession, CK_BYTE_PTR pData,
 		TRACE_DEVEL("encr_mgr_encrypt() failed.\n");
 
 done:
-	if (rc != CKR_BUFFER_TOO_SMALL && (rc != CKR_OK || length_only != TRUE))
-		encr_mgr_cleanup( &sess->encr_ctx );
+	encr_mgr_cleanup( &sess->encr_ctx );
 
 	TRACE_INFO("C_Encrypt: rc = 0x%08lx, sess = %ld, amount = %lu\n",
 		   rc, (sess == NULL) ? -1 : (CK_LONG)sess->handle, ulDataLen);
@@ -2035,8 +2034,7 @@ CK_RV SC_EncryptFinal(ST_SESSION_HANDLE *sSession,
 		TRACE_ERROR("encr_mgr_encrypt_final() failed.\n");
 
 done:
-	if (rc != CKR_BUFFER_TOO_SMALL && (rc != CKR_OK || length_only != TRUE))
-		encr_mgr_cleanup( &sess->encr_ctx );
+	encr_mgr_cleanup( &sess->encr_ctx );
 
 	TRACE_INFO("C_EncryptFinal: rc = 0x%08lx, sess = %ld\n",
 		   rc, (sess == NULL) ? -1 : (CK_LONG) sess->handle);
@@ -2143,8 +2141,7 @@ CK_RV SC_Decrypt(ST_SESSION_HANDLE *sSession, CK_BYTE_PTR pEncryptedData,
 		TRACE_DEVEL("decr_mgr_decrypt() failed.\n");
 
 done:
-	if (rc != CKR_BUFFER_TOO_SMALL && (rc != CKR_OK || length_only != TRUE))
-		decr_mgr_cleanup( &sess->decr_ctx );
+	decr_mgr_cleanup( &sess->decr_ctx );
 
 	TRACE_INFO("C_Decrypt: rc = 0x%08lx, sess = %ld, amount = %lu\n",
 		   rc, (sess == NULL) ? -1 : (CK_LONG)sess->handle,
@@ -2248,8 +2245,7 @@ CK_RV SC_DecryptFinal(ST_SESSION_HANDLE *sSession, CK_BYTE_PTR pLastPart,
 	if (rc != CKR_OK)
 		TRACE_DEVEL("decr_mgr_decrypt_final() failed.\n");
 done:
-	if (rc != CKR_BUFFER_TOO_SMALL && (rc != CKR_OK || length_only != TRUE))
-		decr_mgr_cleanup( &sess->decr_ctx );
+	decr_mgr_cleanup( &sess->decr_ctx );
 
 	TRACE_INFO("C_DecryptFinal:  rc = 0x%08lx, sess = %ld, amount = %lu\n",
 		   rc, (sess == NULL) ? -1 : (CK_LONG)sess->handle,
