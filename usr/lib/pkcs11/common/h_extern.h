@@ -807,6 +807,7 @@ CK_RV save_masterkey_user( void );
 CK_RV generate_master_key(CK_BYTE *key);
 
 void init_data_store(char *directory);
+void free_data_store( void );
 
 void copy_token_contents_sensibly(CK_TOKEN_INFO_PTR pInfo,
                                   TOKEN_DATA *nv_token_data);

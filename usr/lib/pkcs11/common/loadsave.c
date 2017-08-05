@@ -1898,3 +1898,10 @@ void init_data_store(char *directory)
 		sprintf(pk_dir, "%s", directory);
 	}
 }
+
+void free_data_store() {
+	if (pk_dir) {
+		free(pk_dir);
+		pk_dir = NULL;
+	}
+}

@@ -539,6 +539,16 @@ CK_RV SC_Finalize(CK_SLOT_ID sid)
 		}
 	}
 
+	/* Clean out the global login state variable
+	 * When implemented...  Although logout_all should clear this up.
+	 */
+	bt_destroy(&sess_btree, call_free);
+	bt_destroy(&sess_obj_btree, call_free);
+	bt_destroy(&priv_token_obj_btree, call_free);
+	bt_destroy(&publ_token_obj_btree, call_free);
+	bt_destroy(&object_map_btree, call_free);
+
+	free_data_store();
 done:
 	rc_mutex = MY_UnlockMutex(&pkcs_mutex);
 	if (rc_mutex != CKR_OK) {
